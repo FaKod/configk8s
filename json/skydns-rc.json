@@ -1,83 +1,87 @@
 {
-    "apiVersion": "v1",
-    "kind": "ReplicationController",
+    "kind": "Deployment",
+    "apiVersion": "extensions/v1beta1",
     "metadata": {
-        "name": "kube-dns-v11",
+        "name": "kube-dns",
         "namespace": "kube-system",
+        "generation": 2,
         "labels": {
             "k8s-app": "kube-dns",
-            "version": "v11",
             "kubernetes.io/cluster-service": "true"
+        },
+        "annotations": {
+            "deployment.kubernetes.io/revision": "1"
         }
     },
     "spec": {
         "replicas": 1,
         "selector": {
-            "k8s-app": "kube-dns",
-            "version": "v11"
+            "matchLabels": {
+                "k8s-app": "kube-dns"
+            }
         },
         "template": {
             "metadata": {
                 "labels": {
-                    "k8s-app": "kube-dns",
-                    "version": "v11",
-                    "kubernetes.io/cluster-service": "true"
+                    "k8s-app": "kube-dns"
+                },
+                "annotations": {
+                    "scheduler.alpha.kubernetes.io/critical-pod": "",
+                    "scheduler.alpha.kubernetes.io/tolerations": "[{\"key\":\"CriticalAddonsOnly\", \"operator\":\"Exists\"}]"
                 }
             },
             "spec": {
                 "containers": [
                     {
-                        "name": "etcd",
-                        "image": "gcr.io/google_containers/etcd-amd64:2.2.1",
-                        "resources": {
-                            "limits": {
-                                "cpu": "100m",
-                                "memory": "50Mi"
-                            },
-                            "requests": {
-                                "cpu": "100m",
-                                "memory": "50Mi"
-                            }
-                        },
-                        "command": [
-                            "/usr/local/bin/etcd",
-                            "-data-dir",
-                            "/var/etcd/data",
-                            "-listen-client-urls",
-                            "http://127.0.0.1:2379,http://127.0.0.1:4001",
-                            "-advertise-client-urls",
-                            "http://127.0.0.1:2379,http://127.0.0.1:4001",
-                            "-initial-cluster-token",
-                            "skydns-etcd"
+                        "name": "kubedns",
+                        "image": "gcr.io/google_containers/kubedns-amd64:1.9",
+                        "args": [
+                            "--domain=cluster.local.",
+                            "--dns-port=10053",
+                            "--config-map=kube-dns",
+                            "--v=0"
                         ],
-                        "volumeMounts": [
+                        "ports": [
                             {
-                                "name": "etcd-storage",
-                                "mountPath": "/var/etcd/data"
+                                "name": "dns-local",
+                                "containerPort": 10053,
+                                "protocol": "UDP"
+                            },
+                            {
+                                "name": "dns-tcp-local",
+                                "containerPort": 10053,
+                                "protocol": "TCP"
+                            },
+                            {
+                                "name": "metrics",
+                                "containerPort": 10055,
+                                "protocol": "TCP"
                             }
-                        ]
-                    },
-                    {
-                        "name": "kube2sky",
-                        "image": "gcr.io/google_containers/kube2sky:1.14",
+                        ],
+                        "env": [
+                            {
+                                "name": "PROMETHEUS_PORT",
+                                "value": "10055"
+                            }
+                        ],
                         "resources": {
                             "limits": {
-                                "cpu": "100m",
-                                "memory": "50Mi"
+                                "memory": "170Mi"
                             },
                             "requests": {
                                 "cpu": "100m",
-                                "memory": "50Mi"
+                                "memory": "70Mi"
                             }
                         },
                         "livenessProbe": {
                             "httpGet": {
-                                "path": "/healthz",
+                                "path": "/healthz-kubedns",
                                 "port": 8080,
                                 "scheme": "HTTP"
                             },
                             "initialDelaySeconds": 60,
                             "timeoutSeconds": 5,
+                            "periodSeconds": 10,
                             "successThreshold": 1,
                             "failureThreshold": 5
                         },
@@ -87,78 +91,139 @@
                                 "port": 8081,
                                 "scheme": "HTTP"
                             },
-                            "initialDelaySeconds": 30,
-                            "timeoutSeconds": 5
+                            "initialDelaySeconds": 3,
+                            "timeoutSeconds": 5,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "failureThreshold": 3
                         },
-                        "args": [
-                            "--domain=cluster.local"
-                        ]
+                        "terminationMessagePath": "/dev/termination-log",
+                        "imagePullPolicy": "IfNotPresent"
                     },
                     {
-                        "name": "skydns",
-                        "image": "gcr.io/google_containers/skydns:2015-10-13-8c72f8c",
-                        "resources": {
-                            "limits": {
-                                "cpu": "100m",
-                                "memory": "50Mi"
-                            },
-                            "requests": {
-                                "cpu": "100m",
-                                "memory": "50Mi"
-                            }
-                        },
+                        "name": "dnsmasq",
+                        "image": "gcr.io/google_containers/kube-dnsmasq-amd64:1.4",
                         "args": [
-                            "-machines=http://127.0.0.1:4001",
-                            "-addr=0.0.0.0:53",
-                            "-ns-rotate=false",
-                            "-domain=cluster.local."
+                            "--cache-size=1000",
+                            "--no-resolv",
+                            "--server=127.0.0.1#10053",
+                            "--log-facility=-"
                         ],
                         "ports": [
                             {
-                                "containerPort": 53,
                                 "name": "dns",
+                                "containerPort": 53,
                                 "protocol": "UDP"
                             },
                             {
-                                "containerPort": 53,
                                 "name": "dns-tcp",
+                                "containerPort": 53,
                                 "protocol": "TCP"
                             }
-                        ]
+                        ],
+                        "resources": {
+                            "requests": {
+                                "cpu": "150m",
+                                "memory": "10Mi"
+                            }
+                        },
+                        "livenessProbe": {
+                            "httpGet": {
+                                "path": "/healthz-dnsmasq",
+                                "port": 8080,
+                                "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 60,
+                            "timeoutSeconds": 5,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "failureThreshold": 5
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "imagePullPolicy": "IfNotPresent"
+                    },
+                    {
+                        "name": "dnsmasq-metrics",
+                        "image": "gcr.io/google_containers/dnsmasq-metrics-amd64:1.0",
+                        "args": [
+                            "--v=2",
+                            "--logtostderr"
+                        ],
+                        "ports": [
+                            {
+                                "name": "metrics",
+                                "containerPort": 10054,
+                                "protocol": "TCP"
+                            }
+                        ],
+                        "resources": {
+                            "requests": {
+                                "memory": "10Mi"
+                            }
+                        },
+                        "livenessProbe": {
+                            "httpGet": {
+                                "path": "/metrics",
+                                "port": 10054,
+                                "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 60,
+                            "timeoutSeconds": 5,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "failureThreshold": 5
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "imagePullPolicy": "IfNotPresent"
                     },
                     {
                         "name": "healthz",
-                        "image": "gcr.io/google_containers/exechealthz:1.0",
-                        "resources": {
-                            "limits": {
-                                "cpu": "10m",
-                                "memory": "20Mi"
-                            },
-                            "requests": {
-                                "cpu": "10m",
-                                "memory": "20Mi"
-                            }
-                        },
+                        "image": "gcr.io/google_containers/exechealthz-amd64:1.2",
                         "args": [
-                            "-cmd=nslookup kubernetes.default.svc.cluster.local 127.0.0.1 >/dev/null",
-                            "-port=8080"
+                            "--cmd=nslookup kubernetes.default.svc.cluster.local 127.0.0.1 \u003e/dev/null",
+                            "--url=/healthz-dnsmasq",
+                            "--cmd=nslookup kubernetes.default.svc.cluster.local 127.0.0.1:10053 \u003e/dev/null",
+                            "--url=/healthz-kubedns",
+                            "--port=8080",
+                            "--quiet"
                         ],
                         "ports": [
                             {
                                 "containerPort": 8080,
                                 "protocol": "TCP"
                             }
-                        ]
+                        ],
+                        "resources": {
+                            "limits": {
+                                "memory": "50Mi"
+                            },
+                            "requests": {
+                                "cpu": "10m",
+                                "memory": "50Mi"
+                            }
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "imagePullPolicy": "IfNotPresent"
                     }
                 ],
-                "volumes": [
-                    {
-                        "name": "etcd-storage",
-                        "emptyDir": {}
-                    }
-                ],
-                "dnsPolicy": "Default"
+                "restartPolicy": "Always",
+                "terminationGracePeriodSeconds": 30,
+                "dnsPolicy": "Default",
+                "securityContext": {}
+            }
+        },
+        "strategy": {
+            "type": "RollingUpdate",
+            "rollingUpdate": {
+                "maxUnavailable": 1,
+                "maxSurge": 1
             }
         }
+    },
+    "status": {
+        "observedGeneration": 2,
+        "replicas": 1,
+        "updatedReplicas": 1,
+        "availableReplicas": 1
     }
 }
