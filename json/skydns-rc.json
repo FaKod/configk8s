@@ -8,9 +8,6 @@
         "labels": {
             "k8s-app": "kube-dns",
             "kubernetes.io/cluster-service": "true"
-        },
-        "annotations": {
-            "deployment.kubernetes.io/revision": "1"
         }
     },
     "spec": {
