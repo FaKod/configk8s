@@ -180,9 +180,9 @@
                         "name": "healthz",
                         "image": "gcr.io/google_containers/exechealthz-amd64:1.2",
                         "args": [
-                            "--cmd=nslookup kubernetes.default.svc.cluster.local 127.0.0.1 \u003e/dev/null",
+                            "--cmd=nslookup kubernetes.default.svc.cluster.local 127.0.0.1 > /dev/null",
                             "--url=/healthz-dnsmasq",
-                            "--cmd=nslookup kubernetes.default.svc.cluster.local 127.0.0.1:10053 \u003e/dev/null",
+                            "--cmd=nslookup kubernetes.default.svc.cluster.local 127.0.0.1:10053 > /dev/null",
                             "--url=/healthz-kubedns",
                             "--port=8080",
                             "--quiet"
